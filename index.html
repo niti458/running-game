@@ -1,0 +1,331 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Metro Rush - Endless Runner</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: #101827; color: white;
+  font-family: Arial, sans-serif; text-align: center;
+  overflow: hidden;
+}
+h2 { margin: 8px 0; }
+#game {
+  display: block; margin: auto; background: #263747;
+  width: min(100vw, 480px); height: calc(100dvh - 115px);
+  max-height: 760px; touch-action: none;
+}
+.hud {
+  display: flex; justify-content: space-around;
+  padding: 8px; font-size: 17px;
+}
+.controls {
+  display: flex; justify-content: center; gap: 12px;
+  padding: 8px;
+}
+button {
+  border: 0; border-radius: 12px; padding: 12px 19px;
+  background: #00c896; color: #071a20;
+  font-size: 17px; font-weight: bold;
+}
+#hint { font-size: 12px; color: #cbd5e1; }
+</style>
+</head>
+<body>
+<h2>🚇 METRO RUSH</h2>
+<div class="hud">
+  <span>⭐ Score: <b id="score">0</b></span>
+  <span>🪙 Coins: <b id="coins">0</b></span>
+</div>
+<canvas id="game" width="400" height="650"></canvas>
+<div class="controls">
+  <button onclick="move(-1)">⬅️</button>
+  <button onclick="jump()">⬆️ Jump</button>
+  <button onclick="slide()">⬇️ Slide</button>
+  <button onclick="move(1)">➡️</button>
+</div>
+<div id="hint">Arrow keys / WASD or swipe to move. Avoid obstacles!</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 400, H = 650;
+const laneX = [100, 200, 300];
+
+let player, obstacles, coinsList, score, coinCount;
+let speed, spawnTimer, coinTimer, roadOffset, running;
+let lastTime = 0, animationId = 0;
+
+function reset() {
+  player = {
+    lane: 1, x: 200, y: 520,
+    jumpY: 0, jumpV: 0, slide: 0
+  };
+  obstacles = [];
+  coinsList = [];
+  score = 0;
+  coinCount = 0;
+  speed = 250;
+  spawnTimer = 0.7;
+  coinTimer = 1;
+  roadOffset = 0;
+  running = true;
+  document.getElementById("score").textContent = 0;
+  document.getElementById("coins").textContent = 0;
+}
+
+function move(dir) {
+  if (!running) return;
+  player.lane = Math.max(0, Math.min(2, player.lane + dir));
+}
+function jump() {
+  if (!running) { reset(); return; }
+  if (player.jumpY === 0 && player.slide <= 0) {
+    player.jumpV = 650;
+  }
+}
+function slide() {
+  if (!running) { reset(); return; }
+  if (player.jumpY === 0) player.slide = 0.65;
+}
+
+document.addEventListener("keydown", e => {
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," "].includes(e.key))
+    e.preventDefault();
+  if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a") move(-1);
+  if (e.key === "ArrowRight" || e.key.toLowerCase() === "d") move(1);
+  if (e.key === "ArrowUp" || e.key.toLowerCase() === "w" || e.key === " ")
+    jump();
+  if (e.key === "ArrowDown" || e.key.toLowerCase() === "s") slide();
+  if (!running && e.key === "Enter") reset();
+});
+
+let touchX = 0, touchY = 0;
+canvas.addEventListener("pointerdown", e => {
+  touchX = e.clientX;
+  touchY = e.clientY;
+});
+canvas.addEventListener("pointerup", e => {
+  const dx = e.clientX - touchX;
+  const dy = e.clientY - touchY;
+  if (Math.abs(dx) > 25 || Math.abs(dy) > 25) {
+    if (Math.abs(dx) > Math.abs(dy)) move(dx > 0 ? 1 : -1);
+    else if (dy < 0) jump();
+    else slide();
+  } else if (!running) reset();
+});
+
+function rect(x,y,w,h,color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x,y,w,h);
+}
+
+function drawBackground(dt) {
+  rect(0,0,W,H,"#172b35");
+
+  // Buildings
+  for (let i=0; i<8; i++) {
+    let x = i*58 - 15;
+    let bh = 100 + (i*47 % 100);
+    rect(x,0,42,bh,"#334654");
+    for(let wy=15; wy<bh-8; wy+=24)
+      for(let wx=x+7; wx<x+36; wx+=15)
+        rect(wx,wy,6,9,"#f7c96b");
+  }
+
+  // Railway track and sleepers
+  rect(35,0,330,H,"#4c535b");
+  rect(43,0,5,H,"#bbc3ca");
+  rect(352,0,5,H,"#bbc3ca");
+
+  roadOffset = (roadOffset + speed*dt) % 65;
+  for(let y=-65+roadOffset; y<H; y+=65) {
+    rect(48,y,304,5,"#343c45");
+    rect(145,y,3,65,"#d4d9dd");
+    rect(252,y,3,65,"#d4d9dd");
+  }
+  rect(0,0,35,H,"#1d3b2c");
+  rect(365,0,35,H,"#1d3b2c");
+}
+
+function drawPlayer() {
+  const x = laneX[player.lane];
+  const y = player.y - player.jumpY;
+  const sliding = player.slide > 0;
+  const h = sliding ? 30 : 58;
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,.3)";
+  ctx.beginPath();
+  ctx.ellipse(x, player.y+7, 23, 8, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Legs and body
+  rect(x-14,y-h,28,h-15, "#05c9b0");
+  rect(x-14,y-16,11,16,"#263bde");
+  rect(x+3,y-16,11,16,"#263bde");
+
+  // Arms
+  rect(x-23,y-h+8,9,25,"#f0b18b");
+  rect(x+14,y-h+8,9,25,"#f0b18b");
+
+  // Head and hair
+  ctx.fillStyle="#f2bd91";
+  ctx.beginPath();
+  ctx.arc(x,y-h-10,14,0,Math.PI*2);
+  ctx.fill();
+  rect(x-13,y-h-24,26,8,"#35241d");
+  rect(x-12,y-h-19,5,10,"#35241d");
+
+  // Eyes
+  rect(x-7,y-h-12,3,3,"#18212b");
+  rect(x+4,y-h-12,3,3,"#18212b");
+}
+
+function drawObstacle(o) {
+  const x=laneX[o.lane], y=o.y;
+
+  if(o.type==="train") {
+    rect(x-39,y-75,78,110,"#d84d42");
+    rect(x-31,y-67,62,48,"#9ce4ed");
+    rect(x-31,y-10,62,24,"#f3b83e");
+    rect(x-29,y+20,16,9,"#292e37");
+    rect(x+13,y+20,16,9,"#292e37");
+    rect(x-7,y+18,14,13,"#f9e8ac");
+  } else if(o.type==="barrier") {
+    rect(x-32,y-28,64,30,"#f1ad32");
+    for(let k=-25;k<30;k+=22)
+      rect(x+k,y-27,10,28,"#e44c3c");
+    rect(x-25,y+2,7,12,"#9da7b0");
+    rect(x+18,y+2,7,12,"#9da7b0");
+  } else {
+    // Overhead obstacle: slide underneath
+    rect(x-34,y-65,68,18,"#b77bff");
+    rect(x-29,y-47,9,28,"#9b68d4");
+    rect(x+20,y-47,9,28,"#9b68d4");
+  }
+}
+
+function drawCoin(c) {
+  const x=laneX[c.lane], y=c.y;
+  ctx.fillStyle="#ffdb38";
+  ctx.beginPath();
+  ctx.arc(x,y,10,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle="#fff2a0";
+  ctx.lineWidth=3;
+  ctx.stroke();
+  ctx.fillStyle="#a96c12";
+  ctx.font="bold 12px Arial";
+  ctx.textAlign="center";
+  ctx.fillText("$",x,y+4);
+}
+
+function endGame() {
+  running = false;
+}
+
+function update(dt) {
+  if(!running) return;
+
+  score += dt * 10;
+  speed = Math.min(470, speed + dt*4);
+  player.x += (laneX[player.lane]-player.x)*Math.min(1,dt*12);
+
+  if(player.jumpY > 0 || player.jumpV > 0) {
+    player.jumpY += player.jumpV*dt;
+    player.jumpV -= 1550*dt;
+    if(player.jumpY <= 0) {
+      player.jumpY = 0;
+      player.jumpV = 0;
+    }
+  }
+  player.slide = Math.max(0,player.slide-dt);
+
+  spawnTimer -= dt;
+  if(spawnTimer<=0) {
+    const types=["train","barrier","overhead"];
+    obstacles.push({
+      lane:Math.floor(Math.random()*3),
+      y:-35,
+      type:types[Math.floor(Math.random()*types.length)]
+    });
+    spawnTimer=Math.max(0.48,1.05-Math.min(0.45,(speed-250)/500))
+      + Math.random()*0.35;
+  }
+
+  coinTimer -= dt;
+  if(coinTimer<=0) {
+    const lane=Math.floor(Math.random()*3);
+    for(let i=0;i<5;i++)
+      coinsList.push({lane,y:-i*38-20});
+    coinTimer=1.7+Math.random()*0.8;
+  }
+
+  for(const o of obstacles) {
+    o.y += speed*dt;
+    const sameLane=o.lane===player.lane;
+    const nearPlayer=o.y>player.y-48 && o.y<player.y+20;
+
+    if(sameLane && nearPlayer) {
+      let safe=false;
+      if(o.type==="barrier" && player.jumpY>42) safe=true;
+      if(o.type==="overhead" && player.slide>0) safe=true;
+      if(!safe) endGame();
+    }
+  }
+
+  for(const c of coinsList) {
+    c.y += speed*dt;
+    if(!c.taken && c.lane===player.lane &&
+       Math.abs(c.y-(player.y-28+player.jumpY*0.1))<28) {
+      c.taken=true;
+      coinCount++;
+      score+=25;
+    }
+  }
+
+  obstacles=obstacles.filter(o=>o.y<H+100);
+  coinsList=coinsList.filter(c=>c.y<H+30&&!c.taken);
+
+  document.getElementById("score").textContent=Math.floor(score);
+  document.getElementById("coins").textContent=coinCount;
+}
+
+function draw() {
+  drawBackground(0);
+  for(const c of coinsList) drawCoin(c);
+  for(const o of obstacles) drawObstacle(o);
+  drawPlayer();
+
+  if(!running) {
+    ctx.fillStyle="rgba(5,12,25,.82)";
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign="center";
+    ctx.fillStyle="#ffffff";
+    ctx.font="bold 34px Arial";
+    ctx.fillText("GAME OVER",W/2,260);
+    ctx.font="20px Arial";
+    ctx.fillText("Score: "+Math.floor(score),W/2,305);
+    ctx.fillText("Coins: "+coinCount,W/2,338);
+    ctx.font="17px Arial";
+    ctx.fillText("Tap game or press Enter",W/2,390);
+  }
+}
+
+function frame(time) {
+  const dt=Math.min((time-lastTime)/1000||0,0.04);
+  lastTime=time;
+  update(dt);
+  draw();
+  animationId=requestAnimationFrame(frame);
+}
+
+reset();
+frame(0);
+</script>
+</body>
+</html>
